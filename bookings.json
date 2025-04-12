@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1741606204634,
+    "flightId": "1",
+    "passengerName": "JENI",
+    "seatPreference": "Window",
+    "price": "59.81",
+    "status": "Confirmed"
+  },
+  {
+    "id": 1741615693014,
+    "flightId": "1",
+    "passengerName": "VEERA",
+    "seatPreference": "Window",
+    "price": "59.81",
+    "status": "Confirmed"
+  }
+]
