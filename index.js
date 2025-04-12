@@ -20,7 +20,7 @@ app.use("/api/airlines", airlineRoutes);
 const User = require("./models/User");
 app.use("/api", require("./routes/userRoutes"));
 const Booking = require("./models/Booking"); // Ensure correct path
-const flightTracking = {}; // Declare this globally
+const flightTracking = new Map();
 const server = http.createServer(app);
 
 // ✅ Attach Socket.IO to the server
@@ -694,20 +694,19 @@ const getFlightStatus = async (flightNumber, departureDate) => {
 };
 
 const checkFlightUpdates = async () => {
-    for (const [flightKey, userInfo] of flightTracking.entries()) {
-        const { flightNumber, departureDate, userId, email, phone } = userInfo;
-        const status = await getFlightStatus(flightNumber, departureDate);
+  for (const [flightKey, userInfo] of flightTracking.entries()) {
+    const { flightNumber, departureDate, userId, email, phone } = userInfo;
+    const status = await getFlightStatus(flightNumber, departureDate);
 
-        if (status) {
-            io.to(userId).emit("flight-status-update", status);
-            
-            // If status has changed significantly, send an email & SMS
-            if (status.status === "Delayed" || status.status === "Canceled") {
-                sendFlightUpdateEmail(email, status);
-                sendFlightUpdateSMS(phone, status);
-            }
-        }
+    if (status) {
+      io.to(userId).emit("flight-status-update", status);
+
+      if (status.status === "Delayed" || status.status === "Canceled") {
+        sendFlightUpdateEmail(email, status);
+        sendFlightUpdateSMS(phone, status);
+      }
     }
+  }
 };
 
 app.get("/api/flight-status/:flightNumber/:departureDate", async (req, res) => {
@@ -719,35 +718,35 @@ app.get("/api/flight-status/:flightNumber/:departureDate", async (req, res) => {
 const flightCache = new Map(); // Cache for flight status
 
 io.on("connection", (socket) => {
-    console.log("Client connected:", socket.id);
+  console.log("Client connected:", socket.id);
 
-    socket.on("requestFlightStatus", async ({ flightNumber, departureDate }) => {
-        const cacheKey = `${flightNumber}-${departureDate}`;
-        if (flightCache.has(cacheKey)) {
-            console.log("🔄 Serving from cache:", cacheKey);
-            return socket.emit("flightStatusUpdate", flightCache.get(cacheKey));
-        }
+  socket.on("requestFlightStatus", async ({ flightNumber, departureDate }) => {
+    const cacheKey = `${flightNumber}-${departureDate}`;
+    if (flightCache.has(cacheKey)) {
+      console.log("🔄 Serving from cache:", cacheKey);
+      return socket.emit("flightStatusUpdate", flightCache.get(cacheKey));
+    }
 
-        const status = await getFlightStatus(flightNumber, departureDate);
-        flightCache.set(cacheKey, status);
+    const status = await getFlightStatus(flightNumber, departureDate);
+    flightCache.set(cacheKey, status);
+    setTimeout(() => flightCache.delete(cacheKey), 30000);
 
-        setTimeout(() => flightCache.delete(cacheKey), 30000); // Clear cache after 30 sec
+    socket.emit("flightStatusUpdate", status);
+  });
 
-        socket.emit("flightStatusUpdate", status);
-    });
+  socket.on("track-flight", ({ flightNumber, departureDate, email, phone }) => {
+    flightTracking.set(socket.id, { flightNumber, departureDate, userId: socket.id, email, phone });
+    console.log(`🔍 Tracking flight ${flightNumber} for ${socket.id}`);
+  });
 
-    socket.on("track-flight", ({ flightNumber, departureDate, email, phone }) => {
-        flightTracking.set(socket.id, { flightNumber, departureDate, userId: socket.id, email, phone });
-        console.log(`🔍 Tracking flight ${flightNumber} for ${socket.id}`);
-    });
-
-    socket.on("disconnect", () => {
-        console.log("Client disconnected",socket.id);
-    });
+  socket.on("disconnect", () => {
+    console.log("Client disconnected", socket.id);
+    flightTracking.delete(socket.id); // ✅ cleanup
+  });
 });
 
+setInterval(checkFlightUpdates, 600000); // Check every 10 mins
 
-setInterval(checkFlightUpdates, 600000);
 
 
 app.get("/api/airlines/flights", async (req, res) => {
@@ -831,49 +830,122 @@ app.get("/api/bookings/history/:userId", async (req, res) => {
 });
 
 // /routes/reports.js
-app.get("/trends", async (req, res) => {
+// app.get("/api/reports/trends", (req, res) => {
+//   res.json([
+//     { _id: "Nov", totalBookings: 10 },
+//     { _id: "Dec", totalBookings: 15 },
+//     { _id: "Jan", totalBookings: 25 },
+//     { _id: "Feb", totalBookings: 30 },
+//     { _id: "Mar", totalBookings: 22 },
+//     { _id: "Apr", totalBookings: 18 },
+//   ]);
+// });
+
+// // Dummy: Sales
+// app.get("/api/reports/sales", (req, res) => {
+//   res.json([
+//     { _id: "IndiGo", totalRevenue: 50000 },
+//     { _id: "Air India", totalRevenue: 75000 },
+//     { _id: "Vistara", totalRevenue: 30000 },
+//     { _id: "SpiceJet", totalRevenue: 20000 },
+//   ]);
+// });
+
+// // Dummy: Users
+// app.get("/api/reports/users", (req, res) => {
+//   res.json([
+//     { _id: "user1@example.com", bookings: 5, totalSpent: 12000 },
+//     { _id: "user2@example.com", bookings: 3, totalSpent: 9500 },
+//     { _id: "user3@example.com", bookings: 7, totalSpent: 18500 },
+//   ]);
+// });
+
+
+app.get("/api/reports/trends", async (req, res) => {
+  try {
     const trends = await Booking.aggregate([
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+          _id: { $month: "$createdAt" },
           totalBookings: { $sum: 1 }
         }
       },
-      { $sort: { _id: 1 } }
+      {
+        $sort: { _id: 1 }
+      }
     ]);
-    res.json(trends);
-  });
 
-  // /routes/reports.js
-  app.get("/sales", async (req, res) => {
+    // Optional: convert month number to name
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const formatted = trends.map(item => ({
+      _id: monthNames[item._id - 1],
+      totalBookings: item.totalBookings
+    }));
+
+    res.json(formatted);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+})
+
+app.get("/api/reports/sales", async (req, res) => {
+  try {
     const sales = await Booking.aggregate([
       {
         $group: {
           _id: "$airline",
-          totalRevenue: { $sum: "$totalPrice" },
-          totalBookings: { $sum: 1 }
+          totalRevenue: { $sum: "$amount" }
         }
       },
-      { $sort: { totalRevenue: -1 } }
+      {
+        $sort: { totalRevenue: -1 }
+      }
     ]);
-    res.json(sales);
-  });
-  
 
-  app.get("/users", async (req, res) => {
-    const activity = await Booking.aggregate([
+    res.json(sales);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+
+app.get("/api/reports/users", async (req, res) => {
+  try {
+    const topUsers = await Booking.aggregate([
       {
         $group: {
           _id: "$userId",
           bookings: { $sum: 1 },
-          totalSpent: { $sum: "$totalPrice" }
+          totalSpent: { $sum: "$amount" }
         }
       },
-      { $sort: { bookings: -1 } }
+      {
+        $sort: { totalSpent: -1 }
+      },
+      {
+        $limit: 5
+      }
     ]);
-    res.json(activity);
-  });
-  
+
+    // Lookup user emails from User collection
+    const usersWithDetails = await Promise.all(topUsers.map(async (u) => {
+      const user = await User.findById(u._id);
+      return {
+        _id: user?.email || "Unknown",
+        bookings: u.bookings,
+        totalSpent: u.totalSpent
+      };
+    }));
+
+    res.json(usersWithDetails);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
   app.get("/api/users/:id", async (req, res) => {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).send("User not found");

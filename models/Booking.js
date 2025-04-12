@@ -19,7 +19,16 @@ const bookingSchema = new mongoose.Schema({
     createdAt: {
       type: Date,
       default: Date.now
-    }
+    },
+    userId: {
+      type: String,
+      required: true,
+    },
+    flightNumber: String,
+    date: String,
+    status: String,
+    // ... other fields
+    
 }, { timestamps: true });
 
 // ✅ Fix: Prevent overwriting the model
